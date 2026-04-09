@@ -12,7 +12,8 @@
       "Bash(git add:*)",
       "Bash(git status:*)",
       "Bash(git rm:*)",
-      "Bash(pip freeze:*)"
+      "Bash(pip freeze:*)",
+      "Bash(aws sts:*)"
     ]
   }
 }
