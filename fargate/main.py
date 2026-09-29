@@ -25,6 +25,10 @@ EXCLUDE_EMPLOYEES = ["구민성"]
 
 # 1차 전체 실행 후, 실패자에 대해 최대 MAX_RETRY회 재시도 (총 MAX_RETRY+1회 시도)
 MAX_RETRY = 3
+
+# 시험 모드 (2026-09-29) — DRY_RUN=1 이면 로그인·대상 계산·메일까지만 하고 18:00 저장은 하지 않는다.
+# ECS 수동 run-task 의 environment override 로만 켠다. 예약 실행(스케줄)에는 넣지 않는다.
+DRY_RUN = os.environ.get("DRY_RUN") == "1"
 # 페이지 이동 1회당 최대 대기 시간(초)
 PAGE_LOAD_TIMEOUT = 60
 
@@ -256,6 +260,7 @@ def main():
     attempts_used = 0
     had_targets = False
     fatal_error = None
+    dry_run_names = None  # 시험 모드일 때만 목록(처리했을 대상)
 
     try:
         # === 로그인 ===
@@ -300,6 +305,11 @@ def main():
         log.info(f"처리 대상: {len(process_list)}명 / SKIP(이미 퇴근): {len(skip_list)}명 / 제외: {len(exclude_list)}명")
         if exclude_list:
             log.info(f"제외(수동 처리): {', '.join(exclude_list)}")
+
+        if DRY_RUN:
+            dry_run_names = list(process_list)
+            log.info(f"[시험 모드] 저장하지 않음 — 처리했을 대상 {len(dry_run_names)}명: {', '.join(dry_run_names)}")
+            process_list = []
 
         # === 재시도 루프 (1차 + 최대 MAX_RETRY회 재시도) ===
         remaining = list(process_list)
@@ -367,12 +377,14 @@ def main():
         today_date, weekday, run_time,
         success_list, skip_list, fail_list, fail_errors,
         exclude_list, attempts_used, had_targets, fatal_error,
+        dry_run_names=dry_run_names,
     )
     send_email(subject, html_body, text_body)
 
 
 def build_email(today_date, weekday, run_time, success_list, skip_list,
-                fail_list, fail_errors, exclude_list, attempts_used, had_targets, fatal_error):
+                fail_list, fail_errors, exclude_list, attempts_used, had_targets, fatal_error,
+                dry_run_names=None):
     """결과를 예쁜 HTML 이메일(+텍스트 폴백)로 구성"""
     s, k, f = len(success_list), len(skip_list), len(fail_list)
 
@@ -403,6 +415,17 @@ def build_email(today_date, weekday, run_time, success_list, skip_list,
         banner = _banner("#16a34a", "#f0fdf4",
                          "모든 대상 직원의 퇴근처리가 완료되었습니다.",
                          f"성공 {s}명 · 스킵 {k}명")
+
+    # --- 시험 모드: 제목·배너를 바꿔 실제 처리와 헷갈리지 않게 한다 ---
+    if dry_run_names is not None:
+        if fatal_error:
+            subject = subject.replace("[Shiftee] ", "[Shiftee] 🧪 시험(저장 안 함) · ", 1)
+        else:
+            subject = f"[Shiftee] 🧪 시험(저장 안 함) · 대상 {len(dry_run_names)}명 - {today_date}"
+            banner = _banner("#7c3aed", "#f5f3ff",
+                             "시험 모드 — 저장하지 않았습니다.",
+                             f"실제 실행이었다면 퇴근 처리했을 직원 {len(dry_run_names)}명: "
+                             + html.escape(", ".join(dry_run_names) or "없음"))
 
     # --- 통계 박스 ---
     stats = (
@@ -495,6 +518,8 @@ def build_email(today_date, weekday, run_time, success_list, skip_list,
         lines.append(f"제외(수동 처리): {', '.join(exclude_list)}")
     if not had_targets and not exclude_list and not fatal_error:
         lines.append("처리할 직원이 없습니다 (전원 완료 또는 출근자 없음).")
+    if dry_run_names is not None:
+        lines.insert(0, f"[시험 모드 · 저장 안 함] 처리했을 대상 {len(dry_run_names)}명: {', '.join(dry_run_names) or '없음'}")
     text_body = "\n".join(lines)
 
     return subject, html_body, text_body

@@ -1,0 +1,16 @@
+# CodeBuild 빌드 설정 (2026-09-29) — 액세스 키 없이 CodeBuild 서비스 역할로 ECR 에 올린다.
+# 소스: fargate/ 폴더를 zip 으로 S3 에 올린 것. 결과: shiftee-exit:latest
+version: 0.2
+env:
+  variables:
+    REPO: 632852507243.dkr.ecr.ap-northeast-2.amazonaws.com/shiftee-exit
+phases:
+  pre_build:
+    commands:
+      - aws ecr get-login-password --region ap-northeast-2 | docker login --username AWS --password-stdin ${REPO%/*}
+  build:
+    commands:
+      - docker build -t $REPO:latest .
+  post_build:
+    commands:
+      - docker push $REPO:latest
