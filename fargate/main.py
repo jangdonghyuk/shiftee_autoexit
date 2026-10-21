@@ -440,6 +440,13 @@ def build_email(today_date, weekday, run_time, success_list, skip_list,
                          "모든 대상 직원의 퇴근처리가 완료되었습니다.",
                          f"성공 {s}명 · 스킵 {k}명")
 
+    # --- 백업 실행(18:10)에서 처리한 사람이 있으면 = 17:59 실행이 놓친 것. 평소 성공 메일과 구분되게 (2026-10-21) ---
+    if run_time >= "18:05" and s > 0 and not fatal_error:
+        subject = subject.replace("[Shiftee] ", "[Shiftee] 🔁 백업 실행 · ", 1)
+        banner = _banner("#d97706", "#fffbeb",
+                         f"백업 실행 — 17:59 실행에서 빠진 {s}명을 처리했습니다.",
+                         "17:59 실행 메일(중단·대상 없음 등)과 CloudWatch 로그를 확인하세요.").replace("<div style=\"background:", "<div style=\"margin-bottom:10px; background:", 1) + banner
+
     # --- 시험 모드: 제목·배너를 바꿔 실제 처리와 헷갈리지 않게 한다 ---
     if dry_run_names is not None:
         if fatal_error:
@@ -542,6 +549,8 @@ def build_email(today_date, weekday, run_time, success_list, skip_list,
         lines.append(f"제외(수동 처리): {', '.join(exclude_list)}")
     if not had_targets and not exclude_list and not fatal_error:
         lines.append("처리할 직원이 없습니다 (전원 완료 또는 출근자 없음).")
+    if run_time >= "18:05" and s > 0 and not fatal_error:
+        lines.insert(0, f"[백업 실행] 17:59 실행에서 빠진 {s}명을 처리함 — 17:59 메일·로그 확인")
     if dry_run_names is not None:
         lines.insert(0, f"[시험 모드 · 저장 안 함] 처리했을 대상 {len(dry_run_names)}명: {', '.join(dry_run_names) or '없음'}")
     text_body = "\n".join(lines)
