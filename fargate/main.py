@@ -31,6 +31,8 @@ MAX_RETRY = 3
 DRY_RUN = os.environ.get("DRY_RUN") == "1"
 # 페이지 이동 1회당 최대 대기 시간(초)
 PAGE_LOAD_TIMEOUT = 60
+# 출퇴근 표가 안 그려지면 목록을 다시 불러오는 최대 횟수
+TABLE_LOAD_TRIES = 3
 
 KST = timezone(timedelta(hours=9))
 
@@ -113,6 +115,28 @@ def wait_for_table(driver, timeout=30):
     except Exception:
         log.warning("표 로딩 대기 시간 초과 — 그대로 진행")
         return False
+
+
+def open_attendance_list(driver, wait):
+    """출퇴근 목록을 열고 표가 그려질 때까지 대기. 안 그려지면 다시 불러와 최대 TABLE_LOAD_TRIES번.
+    (2026-10-20 17:59 실행: 표가 30초 안에 안 그려졌는데 빈 표를 읽어 '출근 0명 → 대상 없음' 메일이 나갔고,
+     10분 뒤 백업 실행에서 4명 처리됨 — 빈 표를 '대상 없음'으로 판정하면 안 된다)"""
+    for i in range(1, TABLE_LOAD_TRIES + 1):
+        driver.get(TARGET_URL)
+        wait.until(lambda d: "attendances" in d.current_url)
+        log.info(f"출퇴근 목록 페이지 도착 ({i}/{TABLE_LOAD_TRIES})")
+        if wait_for_table(driver):
+            return True
+    return False
+
+
+def log_table_snapshot(driver, today_str):
+    """표 상태를 로그에 남긴다 — 줄 수와 앞 3줄 글자(출근 0명이 나오면 원인을 로그로 바로 보려고)."""
+    rows = driver.find_elements(By.CSS_SELECTOR, "tbody tr")
+    log.info(f"표 줄 수 {len(rows)} / 오늘 날짜 문자열 '{today_str}'")
+    for row in rows[:3]:
+        texts = [s.text.strip() for s in row.find_elements(By.CSS_SELECTOR, "td span") if s.text.strip()]
+        log.info(f"  표 앞줄: {' | '.join(texts)[:150]}")
 
 
 def verify_clock_out(driver, today_str, emp_name, timeout=6):
@@ -286,13 +310,13 @@ def main():
         log.info("로그인 성공")
 
         # === 출퇴근 목록 페이지 이동 ===
-        driver.get(TARGET_URL)
-        wait.until(lambda d: "attendances" in d.current_url)
-        log.info("출퇴근 목록 페이지 도착")
-        wait_for_table(driver)
+        if not open_attendance_list(driver, wait):
+            raise RuntimeError(
+                f"출퇴근 표가 {TABLE_LOAD_TRIES}번 모두 안 그려짐 — 출근자를 읽지 못해 처리하지 않음")
         time.sleep(5)
 
         # === 오늘 출근자 필터링 ===
+        log_table_snapshot(driver, today_str)
         today_employees, skip_set = scan_table(driver, today_str)
         targets = TARGET_EMPLOYEES if TARGET_EMPLOYEES else today_employees
 
